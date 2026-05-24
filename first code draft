@@ -1,0 +1,175 @@
+// ============================================
+// Autonomous Car — Line Follower + Obstacle Avoidance
+// L293D + 2x HC-SR04 + 2x IR Sensor
+// ============================================
+
+// ── Motor pins (L293D) ──
+#define IN1 2    // Left motor  — direction
+#define IN2 3    // Left motor  — direction
+#define IN3 4    // Right motor — direction
+#define IN4 5    // Right motor — direction
+#define ENA 6    // Left motor  — PWM speed  → EN1,2
+#define ENB 7    // Right motor — PWM speed  → EN3,4
+
+// ── HC-SR04 Ultrasonic ──
+#define TRIG_L 8   // Left HC-SR04  TRIG
+#define ECHO_L 9   // Left HC-SR04  ECHO
+#define TRIG_R 10  // Right HC-SR04 TRIG
+#define ECHO_R 11  // Right HC-SR04 ECHO
+
+// ── IR Sensors (Line Following) ──
+#define IR_L A0   // Left IR sensor
+#define IR_R A1   // Right IR sensor
+
+// ── Settings ──
+#define BASE_SPEED     170   // Normal speed (0–255)
+#define TURN_SPEED     110   // Turning speed
+#define OBSTACLE_CM    20    // Obstacle detection distance in cm
+#define BACK_TIME      350   // Reverse duration ms
+#define TURN_TIME      450   // Turn duration ms
+
+// ============================================
+// Motor Functions
+// ============================================
+
+void motorForward(int speedL, int speedR) {
+  analogWrite(ENA, speedL);
+  analogWrite(ENB, speedR);
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+}
+
+void motorBackward(int spd) {
+  analogWrite(ENA, spd);
+  analogWrite(ENB, spd);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+}
+
+void motorTurnLeft(int spd) {
+  analogWrite(ENA, TURN_SPEED);
+  analogWrite(ENB, spd);
+  digitalWrite(IN1, LOW);  digitalWrite(IN2, HIGH); // Left wheel backward
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);  // Right wheel forward
+}
+
+void motorTurnRight(int spd) {
+  analogWrite(ENA, spd);
+  analogWrite(ENB, TURN_SPEED);
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);  // Left wheel forward
+  digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH); // Right wheel backward
+}
+
+void motorStop() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+// ============================================
+// Ultrasonic — Get Distance in cm
+// ============================================
+
+long getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH, 25000); // 25ms timeout
+  if (duration == 0) return 999; // Nothing detected
+  return duration * 0.034 / 2;
+}
+
+// ============================================
+// Setup
+// ============================================
+
+void setup() {
+  // Motor pins
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  pinMode(ENA, OUTPUT); pinMode(ENB, OUTPUT);
+
+  // Ultrasonic pins
+  pinMode(TRIG_L, OUTPUT); pinMode(ECHO_L, INPUT);
+  pinMode(TRIG_R, OUTPUT); pinMode(ECHO_R, INPUT);
+
+  // IR pins
+  pinMode(IR_L, INPUT);
+  pinMode(IR_R, INPUT);
+
+  motorStop();
+  Serial.begin(9600);
+  Serial.println("=== System Ready ===");
+  delay(1000); // 1 second before starting
+}
+
+// ============================================
+// Main Loop
+// ============================================
+
+void loop() {
+  // ── Read all sensors ──
+  long distL = getDistance(TRIG_L, ECHO_L);
+  long distR = getDistance(TRIG_R, ECHO_R);
+  int  irL   = digitalRead(IR_L); // LOW  = on black line
+  int  irR   = digitalRead(IR_R); // HIGH = on white surface
+
+  // Print to Serial Monitor for debugging
+  Serial.print("distL="); Serial.print(distL);
+  Serial.print("  distR="); Serial.print(distR);
+  Serial.print("  irL="); Serial.print(irL);
+  Serial.print("  irR="); Serial.println(irR);
+
+  // ── Priority 1: Obstacle Avoidance ──
+  bool obstacleL = (distL > 0 && distL < OBSTACLE_CM);
+  bool obstacleR = (distR > 0 && distR < OBSTACLE_CM);
+
+  if (obstacleL || obstacleR) {
+    motorStop();
+    delay(200);
+
+    // Reverse
+    motorBackward(BASE_SPEED);
+    delay(BACK_TIME);
+
+    motorStop();
+    delay(100);
+
+    // Turn away from obstacle
+    if (distL <= distR) {
+      motorTurnRight(BASE_SPEED); // Obstacle on left  → turn right
+    } else {
+      motorTurnLeft(BASE_SPEED);  // Obstacle on right → turn left
+    }
+    delay(TURN_TIME);
+
+    motorStop();
+    delay(100);
+    return;
+  }
+
+  // ── Priority 2: Line Following ──
+  // IR reads LOW on black line, HIGH on white surface
+
+  if (irL == LOW && irR == LOW) {
+    // Both on line → go straight
+    motorForward(BASE_SPEED, BASE_SPEED);
+
+  } else if (irL == LOW && irR == HIGH) {
+    // Right sensor off line → steer left
+    motorForward(TURN_SPEED, BASE_SPEED);
+
+  } else if (irL == HIGH && irR == LOW) {
+    // Left sensor off line → steer right
+    motorForward(BASE_SPEED, TURN_SPEED);
+
+  } else {
+    // Both off line → keep going straight
+    motorForward(BASE_SPEED, BASE_SPEED);
+  }
+
+  delay(20);
+}
